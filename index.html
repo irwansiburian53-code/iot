@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Saklar Pintar Irone (v5.5 - Realtime UI)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js" type="text/javascript"></script>
+    <style>
+        .toggle-checkbox:checked { right: 0; border-color: #4ade80; }
+        .toggle-checkbox:checked + .toggle-label { background-color: #4ade80; }
+        .pulse-animation { animation: pulse 1.5s ease-in-out infinite alternate; }
+        @keyframes pulse { from { opacity: 0.4; } to { opacity: 1; } }
+        .toast {
+            visibility: hidden; min-width: 250px; background-color: #333; color: #fff;
+            text-align: center; border-radius: 5px; padding: 16px; position: fixed;
+            z-index: 1; left: 50%; transform: translateX(-50%); bottom: 30px;
+            opacity: 0; transition: opacity 0.5s, visibility 0.5s, bottom 0.5s;
+        }
+        .toast.show { visibility: visible; opacity: 1; bottom: 50px; }
+    </style>
+</head>
+<body class="bg-blue-50 font-sans">
+
+    <div class="container mx-auto p-4 md:p-8 max-w-4xl">
+        <header class="mb-6 flex justify-between items-center bg-teal-100 p-4 rounded-lg shadow-md">
+            <div>
+                <h1 class="text-3xl font-bold text-teal-800">Panel Kendali Pintar</h1>
+                <p class="text-teal-600">Terkendali dari jauh</p>
+            </div>
+            <div class="bg-white p-3 rounded-lg shadow-inner">
+                <div class="flex items-center space-x-3 mb-2">
+                    <div id="broker-status-light" class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                    <span id="broker-status-text" class="text-xs font-medium text-gray-600">Broker: Connecting...</span>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <div id="device-status-light" class="w-3 h-3 rounded-full bg-gray-400"></div>
+                    <span id="device-status-text" class="text-xs font-medium text-gray-600">Device: Unknown</span>
+                </div>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="bg-blue-100 p-6 rounded-lg shadow-md">
+                <h3 class="text-lg font-semibold text-blue-800">Lampu Teras (GPIO 12)</h3>
+                <div class="flex items-center justify-between mt-4">
+                    <span id="status-12" class="text-gray-500 font-medium text-lg">...</span>
+                    <div class="relative inline-block w-14 align-middle select-none">
+                        <input type="checkbox" id="toggle-12" class="toggle-checkbox absolute block w-7 h-7 rounded-full bg-white border-4 appearance-none cursor-pointer"/>
+                        <label for="toggle-12" class="toggle-label block overflow-hidden h-7 rounded-full bg-gray-300 cursor-pointer"></label>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-purple-100 p-6 rounded-lg shadow-md">
+                <h3 class="text-lg font-semibold text-purple-800">Pompa Air (GPIO 13)</h3>
+                <div class="flex items-center justify-between mt-4">
+                    <span id="status-13" class="text-gray-500 font-medium text-lg">...</span>
+                    <div class="relative inline-block w-14 align-middle select-none">
+                        <input type="checkbox" id="toggle-13" class="toggle-checkbox absolute block w-7 h-7 rounded-full bg-white border-4 appearance-none cursor-pointer"/>
+                        <label for="toggle-13" class="toggle-label block overflow-hidden h-7 rounded-full bg-gray-300 cursor-pointer"></label>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-orange-100 p-6 rounded-lg shadow-md">
+                <h3 class="text-lg font-semibold text-orange-800">Lampu Taman (GPIO 14)</h3>
+                <div class="flex items-center justify-between mt-4">
+                    <span id="status-14" class="text-gray-500 font-medium text-lg">...</span>
+                        <div class="relative inline-block w-14 align-middle select-none">
+                        <input type="checkbox" id="toggle-14" class="toggle-checkbox absolute block w-7 h-7 rounded-full bg-white border-4 appearance-none cursor-pointer"/>
+                        <label for="toggle-14" class="toggle-label block overflow-hidden h-7 rounded-full bg-gray-300 cursor-pointer"></label>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="bg-lime-100 p-6 rounded-lg shadow-md">
+            <h2 class="text-xl font-semibold mb-4 border-b border-lime-300 pb-2 text-lime-800">Pengaturan Jadwal</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div>
+                    <h3 class="text-lg font-medium mb-3 text-lime-700">Buat Jadwal Baru</h3>
+                    <div class="space-y-4">
+                        <div>
+                            <label for="sched-gpio" class="block text-sm font-medium text-gray-700">Perangkat (GPIO)</label>
+                            <select id="sched-gpio" class="mt-1 block w-full pl-3 pr-10 py-2 border-gray-300 rounded-md shadow-sm focus:border-lime-500 focus:ring-lime-500">
+                                <option value="12">Lampu Teras (12)</option>
+                                <option value="13">Pompa Air (13)</option>
+                                <option value="14">Lampu Taman (14)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="sched-time" class="block text-sm font-medium text-gray-700">Waktu (HH:MM)</label>
+                            <input type="time" id="sched-time" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:border-lime-500 focus:ring-lime-500">
+                        </div>
+                        <div>
+                            <label for="sched-state" class="block text-sm font-medium text-gray-700">Aksi</label>
+                            <select id="sched-state" class="mt-1 block w-full pl-3 pr-10 py-2 border-gray-300 rounded-md shadow-sm focus:border-lime-500 focus:ring-lime-500">
+                                <option value="1">ON</option>
+                                <option value="0">OFF</option>
+                            </select>
+                        </div>
+                        <button id="addSchedBtn" class="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-md shadow-lg transform hover:scale-105 transition-transform">
+                            Tambah ke Daftar
+                        </button>
+                    </div>
+                </div>
+                <div>
+                    <div class="flex justify-between items-center mb-3">
+                         <h3 class="text-lg font-medium text-lime-700">Daftar Jadwal Lokal</h3>
+                         <div class="flex items-center space-x-2">
+                             <button id="refreshSchedBtn" title="Muat ulang jadwal dari perangkat" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-3 rounded-md text-sm shadow-md">
+                                 Muat Ulang
+                             </button>
+                             <button id="sendSchedBtn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-3 rounded-md text-sm shadow-md">
+                                 Kirim & Sinkronkan
+                             </button>
+                         </div>
+                    </div>
+                    <div id="schedule-list" class="bg-white p-3 rounded-md h-64 overflow-y-auto border border-lime-200">
+                        <p class="text-gray-400 text-center mt-4">Menunggu sinkronisasi dari perangkat...</p>
+                    </div>
+                </div>
+            </div>
+       </div>
+    </div>
+    <div id="toast" class="toast">Pesan Notifikasi</div>
+
+    <script>
+        const MQTT_BROKER = "fd7fb73c3b724a0eb77bcdf746b08749.s1.eu.hivemq.cloud";
+        const MQTT_PORT = 8884;
+        const MQTT_USER = "irone1";
+        const MQTT_PASS = "*Alexis01311803";
+        const MQTT_CLIENT_ID = "web-client-" + Math.random().toString(16).substr(2, 8);
+
+        const TOPICS = {
+            CMD_12: "device/irone/gpio12/cmd", STATE_12: "device/irone/gpio12/state",
+            CMD_13: "device/irone/gpio13/cmd", STATE_13: "device/irone/gpio13/state",
+            CMD_14: "device/irone/gpio14/cmd", STATE_14: "device/irone/gpio14/state",
+            HEARTBEAT: "device/irone/heartbeat",
+            SCHEDULE_ADD: "device/irone/schedule/add",
+            SCHEDULE_CLEAR: "device/irone/schedule/clear",
+            SCHEDULE_REQUEST: "device/irone/schedule/request",
+            SCHEDULE_ITEM: "device/irone/schedule/item",
+            SCHEDULE_SYNC_STATUS: "device/irone/schedule/sync_status"
+        };
+        
+        let client;
+        let schedules = [];
+        let lastHeartbeat = null;
+        let deviceStatusChecker = null;
+        let initialScheduleRequested = false;
+
+        function showToast(message) {
+            const toast = document.getElementById("toast");
+            toast.textContent = message;
+            toast.classList.add("show");
+            setTimeout(() => { toast.classList.remove("show"); }, 3000);
+        }
+
+        function startConnection() {
+            try {
+                client = new Paho.MQTT.Client(MQTT_BROKER, MQTT_PORT, "/mqtt", MQTT_CLIENT_ID);
+                client.onConnectionLost = onConnectionLost;
+                client.onMessageArrived = onMessageArrived;
+                const options = {
+                    onSuccess: onConnect, onFailure: onFailure,
+                    userName: MQTT_USER, password: MQTT_PASS, useSSL: true,
+                    cleanSession: true, timeout: 10, keepAliveInterval: 60, mqttVersion: 4
+                };
+                updateBrokerStatus('Connecting...', 'bg-yellow-500');
+                client.connect(options);
+            } catch (error) {
+                console.error("Error creating MQTT client:", error);
+                showToast("Error: " + error.message);
+            }
+        }
+
+        function onConnect() {
+            console.log("MQTT Connected successfully!");
+            updateBrokerStatus('Connected', 'bg-green-500');
+            const subscriptions = [
+                TOPICS.STATE_12, TOPICS.STATE_13, TOPICS.STATE_14,
+                TOPICS.HEARTBEAT, TOPICS.SCHEDULE_ITEM, TOPICS.SCHEDULE_SYNC_STATUS
+            ];
+            subscriptions.forEach(sub => client.subscribe(sub));
+            if (!initialScheduleRequested) {
+                showToast("Terhubung! Meminta daftar jadwal...");
+                requestSchedules(); 
+            } else {
+                showToast("Berhasil terhubung kembali!");
+            }
+            startDeviceStatusMonitor();
+        }
+        
+        function requestSchedules() {
+            sendMessage(TOPICS.SCHEDULE_REQUEST, "GET");
+            initialScheduleRequested = true; 
+        }
+
+        function onMessageArrived(message) {
+            const topic = message.destinationName;
+            const payload = message.payloadString;
+
+            if (topic === TOPICS.HEARTBEAT) {
+                lastHeartbeat = new Date().getTime();
+                updateDeviceStatus('Online', 'bg-green-500 pulse-animation');
+                return;
+            }
+            let pin;
+            if (topic === TOPICS.STATE_12) pin = 12;
+            else if (topic === TOPICS.STATE_13) pin = 13;
+            else if (topic === TOPICS.STATE_14) pin = 14;
+            if (pin) updateToggleUI(pin, payload === 'ON');
+            
+            // =========================================================================
+            // --- INILAH BAGIAN YANG DIPERBAIKI ---
+            // =========================================================================
+            if (topic === TOPICS.SCHEDULE_SYNC_STATUS) {
+                if (payload === 'START') {
+                    schedules = []; // Kosongkan array saat sinkronisasi dimulai
+                    renderScheduleList(); // Langsung render UI agar terlihat kosong
+                    showToast("Menerima daftar jadwal...");
+                } else if (payload === 'END') {
+                    showToast("Sinkronisasi jadwal selesai.");
+                    // renderScheduleList() tidak lagi dibutuhkan di sini
+                }
+            }
+            
+            if (topic === TOPICS.SCHEDULE_ITEM) {
+                try {
+                    const newSched = JSON.parse(payload);
+                    // Tambahkan ID unik jika belum ada, untuk mempermudah penghapusan
+                    if (!newSched.id) {
+                        newSched.id = new Date().getTime() + Math.random();
+                    }
+                    schedules.push(newSched);
+                    // PERINTAHKAN UI UNTUK ME-RENDER SETELAH SETIAP ITEM DITERIMA
+                    renderScheduleList(); // <-- KUNCI PERBAIKANNYA
+                } catch (e) { 
+                    console.error("Gagal parse jadwal individual:", payload, e); 
+                    showToast("Error: Menerima format jadwal yang salah.");
+                }
+            }
+            // =========================================================================
+        }
+
+        function onConnectionLost(responseObject) {
+            if (responseObject.errorCode !== 0) {
+                console.warn("MQTT Connection lost:", responseObject);
+                updateBrokerStatus('Connection Lost', 'bg-red-500');
+                updateDeviceStatus('Unknown', 'bg-gray-400');
+                if (deviceStatusChecker) clearInterval(deviceStatusChecker);
+                showToast("Koneksi terputus. Menyambung kembali...");
+                setTimeout(startConnection, 3000);
+            }
+        }
+        
+        function renderScheduleList() {
+            const listContainer = document.getElementById('schedule-list');
+            listContainer.innerHTML = '';
+            if (schedules.length === 0) {
+                 listContainer.innerHTML = '<p class="text-gray-400 text-center mt-4">Tidak ada jadwal.</p>';
+                 return;
+            }
+            schedules.sort((a, b) => String(a.time).localeCompare(String(b.time)));
+            schedules.forEach((sched) => {
+                const timeStr = String(sched.time).padStart(4, '0');
+                const hour = timeStr.substring(0, 2);
+                const minute = timeStr.substring(2, 4);
+                const state = sched.state === 1 ? 'ON' : 'OFF';
+                const gpioText = {12: "Lampu Teras", 13: "Pompa Air", 14: "Lampu Taman"}[sched.gpio] || `GPIO ${sched.gpio}`;
+                
+                const schedDiv = document.createElement('div');
+                schedDiv.className = 'flex justify-between items-center bg-gray-50 p-2 rounded-md mb-2 shadow-sm text-sm hover:bg-lime-50';
+                schedDiv.dataset.id = sched.id;
+                schedDiv.innerHTML = `
+                    <span><strong>${gpioText}</strong> at <strong>${hour}:${minute}</strong> &rarr; <strong>${state}</strong></span>
+                    <button class="delete-sched-btn text-red-500 hover:text-red-700 font-bold text-xl px-2">&times;</button>
+                `;
+                listContainer.appendChild(schedDiv);
+            });
+        }
+        
+        function sendMessage(topic, payload, qos = 0, retained = false) {
+             if (client && client.isConnected()) {
+                try {
+                    const message = new Paho.MQTT.Message(payload);
+                    message.destinationName = topic;
+                    message.qos = qos;
+                    message.retained = retained;
+                    client.send(message);
+                } catch (error) { console.error(`Error sending to ${topic}:`, error); }
+            }
+        }
+        
+        function onFailure(response) { console.error("MQTT Connection failed:", response); updateBrokerStatus('Connection Failed', 'bg-red-500');}
+        function startDeviceStatusMonitor() { if (deviceStatusChecker) clearInterval(deviceStatusChecker); deviceStatusChecker = setInterval(() => { if (!lastHeartbeat || (new Date().getTime() - lastHeartbeat > 30000)) updateDeviceStatus('Offline', 'bg-red-500'); }, 5000); }
+        function updateBrokerStatus(text, lightClass) { document.getElementById('broker-status-text').textContent = `Broker: ${text}`; document.getElementById('broker-status-light').className = `w-3 h-3 rounded-full ${lightClass}`; }
+        function updateDeviceStatus(text, lightClass) { document.getElementById('device-status-text').textContent = `Device: ${text}`; document.getElementById('device-status-light').className = `w-3 h-3 rounded-full ${lightClass}`; }
+        function updateToggleUI(pin, isChecked) { const toggle = document.getElementById(`toggle-${pin}`); const statusText = document.getElementById(`status-${pin}`); if (toggle && statusText) { toggle.checked = isChecked; statusText.textContent = isChecked ? 'ON' : 'OFF'; statusText.className = isChecked ? 'text-green-600 font-bold text-lg' : 'text-gray-500 font-medium text-lg'; } }
+
+        document.getElementById('addSchedBtn').addEventListener('click', () => {
+            const gpio = parseInt(document.getElementById('sched-gpio').value);
+            const time = document.getElementById('sched-time').value;
+            const state = parseInt(document.getElementById('sched-state').value);
+            if (!time) {
+                alert("Harap tentukan waktu.");
+                return;
+            }
+            const newSchedule = { id: new Date().getTime(), gpio, time: time.replace(':', ''), state };
+            schedules.push(newSchedule);
+            renderScheduleList();
+            showToast("Jadwal ditambahkan ke daftar lokal.");
+            document.getElementById('sched-time').value = '';
+        });
+
+        document.getElementById('schedule-list').addEventListener('click', (e) => {
+            if (e.target && e.target.classList.contains('delete-sched-btn')) {
+                const schedDiv = e.target.closest('div[data-id]');
+                if (schedDiv) {
+                    const idToRemove = Number(schedDiv.dataset.id);
+                    schedules = schedules.filter(s => s.id !== idToRemove);
+                    renderScheduleList();
+                    showToast("Jadwal dihapus dari daftar lokal.");
+                }
+            }
+        });
+        
+        document.getElementById('refreshSchedBtn').addEventListener('click', () => {
+            if (!client || !client.isConnected()) {
+                showToast("Tidak terhubung ke broker.");
+                return;
+            }
+            showToast("Meminta jadwal tersimpan dari perangkat...");
+            requestSchedules();
+        });
+        
+        document.getElementById('sendSchedBtn').addEventListener('click', () => {
+            if (!client || !client.isConnected()) {
+                showToast("Tidak terhubung ke broker."); return;
+            }
+            showToast("Memulai sinkronisasi ke perangkat...");
+            // Kirim pesan CLEAR untuk menghapus semua jadwal di perangkat
+            sendMessage(TOPICS.SCHEDULE_CLEAR, "1");
+
+            // Kirim setiap jadwal dari daftar lokal
+            // Tambahkan jeda singkat setelah clear untuk memberi waktu pada ESP memproses
+            setTimeout(() => {
+                if (schedules.length === 0) {
+                    showToast("Daftar jadwal kosong telah dikirim!");
+                    return;
+                }
+                schedules.forEach((sched, index) => {
+                    // Buat salinan objek tanpa properti 'id' sebelum mengirim
+                    const schedToSend = {
+                        gpio: sched.gpio,
+                        time: sched.time,
+                        state: sched.state
+                    };
+                    setTimeout(() => {
+                        sendMessage(TOPICS.SCHEDULE_ADD, JSON.stringify(schedToSend));
+                        if (index === schedules.length - 1) showToast("Semua jadwal telah terkirim!");
+                    }, index * 100); 
+                });
+            }, 250); // Jeda 250ms
+        });
+
+        [12, 13, 14].forEach(pin => {
+            document.getElementById(`toggle-${pin}`).addEventListener('change', (event) => {
+                if (!client || !client.isConnected()) {
+                    showToast("Tidak terhubung ke broker!");
+                    event.target.checked = !event.target.checked;
+                    return;
+                }
+                const command = event.target.checked ? 'ON' : 'OFF';
+                const topic = {12: TOPICS.CMD_12, 13: TOPICS.CMD_13, 14: TOPICS.CMD_14}[pin];
+                if (topic) sendMessage(topic, command);
+            });
+        });
+        
+        window.addEventListener('load', startConnection);
+        document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && client && !client.isConnected()) startConnection(); });
+    </script>
+</body>
+</html>
